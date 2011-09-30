@@ -1,0 +1,36 @@
+===============================================================================
+
+This patch exports mconsole_direct_notify function, allowing the mconsole
+notification socket to be used from kernel modules.
+
+TECHNICAL INFORMATION:
+
+Applies to kernel 2.6.26.5.
+
+===============================================================================
+
+diff --git a/arch/um/drivers/mconsole_kern.c b/arch/um/drivers/mconsole_kern.c
+index 19d579d..9092a1e 100644
+--- a/arch/um/drivers/mconsole_kern.c
++++ b/arch/um/drivers/mconsole_kern.c
+@@ -785,7 +785,7 @@ static int __init mconsole_init(void)
+ 	/* long to avoid size mismatch warnings from gcc */
+ 	long sock;
+ 	int err;
+-	char file[256];
++	char file[106]; /* fixes: https://bugs.launchpad.net/ubuntu/+source/linux/+bug/284631/comments/4 */
+ 
+ 	if (umid_file_name("mconsole", file, sizeof(file)))
+ 		return -1;
+@@ -941,3 +941,11 @@ char *mconsole_notify_socket(void)
+ }
+ 
+ EXPORT_SYMBOL(mconsole_notify_socket);
++
++void mconsole_direct_notify(char *buf, int count)
++{
++    mconsole_notify(notify_socket, MCONSOLE_USER_NOTIFY, buf, count);
++}
++
++EXPORT_SYMBOL(mconsole_direct_notify);
++
