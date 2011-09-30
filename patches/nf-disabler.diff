@@ -1,0 +1,115 @@
+===============================================================================
+
+Linux firewall (Netfilter, managed by iptables utility) affects the control
+flow of networking code in several ways, even when there are no firewall rules
+specified. For instance, when Netfilter is enabled, incoming IP packets are 
+always reassembled. Short of recompiling the kernel, there is no standard way 
+to disable Netfilter completely.
+
+This patch allows user to disable Netfilter by executing the following command:
+
+    echo 0 > /proc/net/netfilter/enabled
+
+Writing in this procfs file value "1" turns Netfilter back on.
+
+TECHNICAL INFORMATION:
+
+Applies to kernel 2.6.26.5.
+
+===============================================================================
+
+diff --git a/net/netfilter/core.c b/net/netfilter/core.c
+index 292fa28..be3ce9a 100644
+--- a/net/netfilter/core.c
++++ b/net/netfilter/core.c
+@@ -26,6 +26,8 @@
+ 
+ static DEFINE_MUTEX(afinfo_mutex);
+ 
++static int netfilter_enabled = 1;
++
+ const struct nf_afinfo *nf_afinfo[NPROTO] __read_mostly;
+ EXPORT_SYMBOL(nf_afinfo);
+ 
+@@ -162,7 +164,7 @@ int nf_hook_slow(int pf, unsigned int hook, struct sk_buff *skb,
+ 		 int hook_thresh)
+ {
+ 	struct list_head *elem;
+-	unsigned int verdict;
++	unsigned int verdict = NF_ACCEPT;
+ 	int ret = 0;
+ 
+ #ifdef CONFIG_NET_NS
+@@ -178,8 +180,12 @@ int nf_hook_slow(int pf, unsigned int hook, struct sk_buff *skb,
+ 
+ 	elem = &nf_hooks[pf][hook];
+ next_hook:
+-	verdict = nf_iterate(&nf_hooks[pf][hook], skb, hook, indev,
+-			     outdev, &elem, okfn, hook_thresh);
++	
++	if (netfilter_enabled) {
++		verdict = nf_iterate(&nf_hooks[pf][hook], skb, hook, indev,
++			                 outdev, &elem, okfn, hook_thresh);
++	}
++	
+ 	if (verdict == NF_ACCEPT || verdict == NF_STOP) {
+ 		ret = 1;
+ 		goto unlock;
+@@ -193,6 +199,7 @@ next_hook:
+ 	}
+ unlock:
+ 	rcu_read_unlock();
++	
+ 	return ret;
+ }
+ EXPORT_SYMBOL(nf_hook_slow);
+@@ -259,6 +266,34 @@ EXPORT_SYMBOL(nf_conntrack_destroy);
+ #ifdef CONFIG_PROC_FS
+ struct proc_dir_entry *proc_net_netfilter;
+ EXPORT_SYMBOL(proc_net_netfilter);
++
++struct proc_dir_entry *proc_net_netfilter_enabled;
++int nf_proc_enabler_read(char *page, char **buffer_location,
++						 off_t offset, int* eof, void *data)
++{
++	int len;
++	if (offset > 0)
++		return 0;
++	len = sprintf(page, "%d\n", netfilter_enabled);
++	return len;
++}
++
++int nf_proc_enabler_write(struct file *file, const char *buffer,
++						  unsigned long count, void *data)
++{
++	char kbuf;
++	if (count < 1) {
++		return count;
++	}
++	if(copy_from_user(&kbuf, buffer, 1))
++		return -EFAULT;
++	if (kbuf == '1')
++		netfilter_enabled = 1;
++	else if (kbuf == '0')
++		netfilter_enabled = 0;
++	return count;	
++}
++
+ #endif
+ 
+ void __init netfilter_init(void)
+@@ -273,6 +308,14 @@ void __init netfilter_init(void)
+ 	proc_net_netfilter = proc_mkdir("netfilter", init_net.proc_net);
+ 	if (!proc_net_netfilter)
+ 		panic("cannot create netfilter proc entry");
++	else {
++		proc_net_netfilter_enabled = create_proc_entry("enabled", 0644, proc_net_netfilter);
++		if (proc_net_netfilter_enabled) {
++			proc_net_netfilter_enabled->owner = THIS_MODULE;
++			proc_net_netfilter_enabled->read_proc = (read_proc_t *)nf_proc_enabler_read;
++			proc_net_netfilter_enabled->write_proc = (write_proc_t *)nf_proc_enabler_write;
++		}
++	}
+ #endif
+ 
+ 	if (netfilter_queue_init() < 0)
